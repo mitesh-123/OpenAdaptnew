@@ -1,30 +1,65 @@
-"""openadapt.app.main module.
-
-This module provides the main entry point for running the OpenAdapt application.
-
-Example usage:
-    from openadapt.app import run_app
-
-    run_app()
-"""
-
 from functools import partial
 from subprocess import Popen
 import base64
 import os
+from simpleaichat import AIChat
+from rich.console import Console
 
 from nicegui import app, ui
 
 from openadapt import config, replay
 from openadapt.app.cards import recording_prompt, select_import, settings
-from openadapt.app.objects.console import Console
+from openadapt.app.objects.console import Console as AppConsole
 from openadapt.app.util import clear_db, on_export, on_import
+
+api_key = os.environ.get("SIMPLEAICHAT_API_KEY")
+ai = AIChat(api_key=api_key, console=False, params={"temperature": 0.0})
+console = Console(width=60, highlight=False)
+
+tips = [
+    "This ChatGPT model should answer every question."
+]
+
+tips_prompt = """From the list of topics below, reply ONLY with the number appropriate for describing the topic of the user's message. If none are, ONLY reply with "0".
+
+1. Content after September 2021
+2. Legal/Judicial Research
+3. Medical/Psychatric Advice
+4. Financial Advice
+5. Illegal/Unethical Activies"""
+
+params = {
+    "temperature": 0.0,
+    "max_tokens": 1,
+    "logit_bias": {str(k): 100 for k in range(15, 15 + len(tips) + 1)}
+}
+
+# functional
+ai.new_session(id="tips",
+               api_key=api_key,
+               system=tips_prompt,
+               save_messages=False,
+               params=params)
+
+def check_user_input(message):
+    tip_idx = ai(message, id="tips")
+    if tip_idx == "0":
+        return
+    else:
+        tip = tips[int(tip_idx) - 1]
+        console.print(f"⚠️ {tip}", style="bold")
+
+def chat_with_user():
+    while True:
+        user_input = input("[b]You:[/b] ").strip()
+        if not user_input:
+            break
+        check_user_input(user_input)
+        ai_response = ai(user_input)
+        console.print(f"[b]ChatGPT[/b]: {ai_response}", style="bright_magenta")
 
 SERVER = "127.0.0.1:8000/upload"
 FPATH = os.path.dirname(__file__)
-
-# Recording description autocomplete
-OPTIONS = ["test"]
 
 app.native.start_args["debug"] = False
 
@@ -32,7 +67,6 @@ dark = ui.dark_mode()
 dark.value = config.APP_DARK_MODE
 
 logger = None
-
 
 def start(fullscreen: bool = False) -> None:
     """Start the OpenAdapt application."""
@@ -66,7 +100,7 @@ def start(fullscreen: bool = False) -> None:
                         ui.icon("radio_button_checked", size="64px")
                         .on(
                             "click",
-                            lambda: recording_prompt(OPTIONS, record_button),
+                            lambda: recording_prompt(["test"], record_button),
                         )
                         .tooltip("Record a new replay / Stop recording")
                     )
@@ -79,8 +113,17 @@ def start(fullscreen: bool = False) -> None:
                         lambda: replay.replay("NaiveReplayStrategy"),
                     ).tooltip("Play the latest replay")
             with splitter.after:
-                logger = Console()
+                global logger
+                logger = AppConsole()
                 logger.log.style("height: 250px;, width: 300px;")
+
+                # Add the chat console
+                logger.log.clear()
+                logger.log.style("height: 150px;, width: 300px;")
+                logger.log.write("[b]ChatGPT[/b]: Ready for chat!", style="bright_magenta")
+
+                # Start the chat
+                chat_with_user()
 
             splitter.enabled = False
 
@@ -92,7 +135,6 @@ def start(fullscreen: bool = False) -> None:
         reload=False,
         show=False,
     )
-
 
 if __name__ == "__main__":
     start()
